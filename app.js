@@ -1,13 +1,44 @@
 // ============================================
-// PEDIATRIC CDS DOSAGE CALCULATOR
-// Frontend Application Logic
+// PEDIATRIC CDS DOSAGE CALCULATOR — frontend
+//
+// The dose is NOT calculated in JavaScript. Every request goes to the Python
+// package in backend/cds (the same code the pytest suite covers):
+//   * by default it runs in the browser through Pyodide (see py-engine.js),
+//     so the GitHub Pages demo works with no server;
+//   * set API_BASE_URL to use the FastAPI service instead
+//     (e.g. 'http://127.0.0.1:8000/api' while running backend/main.py).
 // ============================================
 
-// Try localhost first, fallback to 127.0.0.1 if needed
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
+'use strict';
+
+const API_BASE_URL = null;
+
+const engine = window.createPyEngine({
+    files: {
+        'cds/__init__.py': 'backend/cds/__init__.py',
+        'cds/formulary.py': 'backend/cds/formulary.py',
+        'cds/models.py': 'backend/cds/models.py',
+        'cds/calculations.py': 'backend/cds/calculations.py',
+        'cds/service.py': 'backend/cds/service.py',
+    },
+    packages: ['pydantic'],
+    entry: 'cds.service.calculate_json',
+});
+
+const ICONS = {
+    safe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    caution: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+    critical: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>',
+};
+
+const MEDICATIONS = ['acetaminophen', 'ibuprofen', 'amoxicillin'];
 
 let currentLanguage = 'en';
 let translations = {};
+let engineState = 'loading';        // loading | ready | error
+let lastOutcome = null;             // {kind: 'result'|'invalid'|'message', ...} — re-rendered on language switch
+
+const $ = (id) => document.getElementById(id);
 
 // ============================================
 // INITIALIZATION
@@ -17,352 +48,294 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadTranslations();
     setupEventListeners();
     updateUILanguage();
+    if (!API_BASE_URL) warmUpEngine();
 });
 
+async function loadTranslations() {
+    const [en, es] = await Promise.all(
+        ['en', 'es'].map((l) => fetch(`lang/${l}.json`).then((r) => {
+            if (!r.ok) throw new Error(`lang/${l}.json: ${r.status}`);
+            return r.json();
+        }))
+    );
+    translations = { en, es };
+}
+
+function t(key) {
+    return (translations[currentLanguage] || {})[key] ?? (translations.en || {})[key] ?? key;
+}
+
+function setupEventListeners() {
+    document.querySelectorAll('.lang-btn').forEach((btn) => {
+        btn.addEventListener('click', () => switchLanguage(btn.dataset.lang));
+    });
+    $('dosage-form').addEventListener('submit', handleFormSubmit);
+    $('clear-btn').addEventListener('click', clearForm);
+    $('close-purpose').addEventListener('click', () => { $('purpose-section').hidden = true; });
+    $('engine-status').addEventListener('click', (e) => {
+        if (e.target.closest('[data-action="retry"]')) warmUpEngine();
+    });
+}
+
 // ============================================
-// LOAD BILINGUAL TRANSLATIONS
+// PYTHON ENGINE
 // ============================================
 
-async function loadTranslations() {
+async function warmUpEngine() {
+    setEngineState('loading');
     try {
-        const [enData, esData] = await Promise.all([
-            fetch('lang/en.json').then(r => r.json()),
-            fetch('lang/es.json').then(r => r.json())
-        ]);
-        
-        translations = {
-            en: enData,
-            es: esData
-        };
-    } catch (error) {
-        console.error('Failed to load translations:', error);
-        // Fallback to embedded translations
-        translations = getFallbackTranslations();
+        await engine.load();
+        setEngineState('ready');
+    } catch (err) {
+        console.error('Python engine failed to load:', err);
+        setEngineState('error');
     }
 }
 
-// ============================================
-// EVENT LISTENERS
-// ============================================
+function setEngineState(state) {
+    engineState = state;
+    renderEngineStatus();
+}
 
-function setupEventListeners() {
-    // Language toggle buttons
-    document.querySelectorAll('.lang-btn').forEach(btn => {
-        btn.addEventListener('click', () => switchLanguage(btn.dataset.lang));
-    });
-    
-    // Form submission
-    document.getElementById('dosage-form').addEventListener('submit', handleFormSubmit);
-    
-    // Clear button
-    document.getElementById('clear-btn').addEventListener('click', clearForm);
-    
-    // Close purpose section
-    document.getElementById('close-purpose').addEventListener('click', () => {
-        document.getElementById('purpose-section').style.display = 'none';
-    });
+function renderEngineStatus() {
+    const el = $('engine-status');
+    if (API_BASE_URL) {
+        el.hidden = true;
+        return;
+    }
+    el.hidden = false;
+    el.dataset.state = engineState;
+    if (engineState === 'loading') {
+        el.innerHTML = `<span class="engine-dot" aria-hidden="true"></span>${escapeHtml(t('engineLoading'))}`;
+    } else if (engineState === 'ready') {
+        el.innerHTML = `<span class="engine-dot" aria-hidden="true"></span>${escapeHtml(t('engineReady'))}`;
+    } else {
+        el.innerHTML = `<span class="engine-dot" aria-hidden="true"></span>${escapeHtml(t('engineError'))} `
+            + `<button type="button" class="link-btn" data-action="retry">${escapeHtml(t('retry'))}</button>`;
+    }
+}
+
+// Both transports return {status, body} with the same body shape.
+async function requestDosage(payload) {
+    if (API_BASE_URL) {
+        const res = await fetch(`${API_BASE_URL}/calculate-dosage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return { status: res.status, body: await res.json() };
+    }
+    return JSON.parse(await engine.call(JSON.stringify(payload)));
 }
 
 // ============================================
-// LANGUAGE SWITCHING
+// LANGUAGE
 // ============================================
 
 function switchLanguage(lang) {
+    if (!translations[lang]) return;
     currentLanguage = lang;
-    
-    // Update button states
-    document.querySelectorAll('.lang-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.lang === lang);
+    document.querySelectorAll('.lang-btn').forEach((btn) => {
+        const active = btn.dataset.lang === lang;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
     });
-    
     updateUILanguage();
+    renderOutcome();
 }
 
 function updateUILanguage() {
-    const t = translations[currentLanguage];
-    
-    if (!t) return;
-    
-    // Update all translatable elements
-    document.getElementById('app-title').textContent = t.title;
-    document.getElementById('app-subtitle').textContent = t.subtitle;
-    document.getElementById('purpose-title').textContent = t.purpose;
-    document.getElementById('purpose-text').textContent = t.purposeText;
-    document.getElementById('weight-label').textContent = t.weightLabel;
-    document.getElementById('medication-label').textContent = t.medicationLabel;
-    document.getElementById('select-placeholder').textContent = t.selectMed;
-    document.getElementById('calculate-text').textContent = t.calculate;
-    document.getElementById('clear-text').textContent = t.clear;
-    document.getElementById('footer-disclaimer').textContent = t.footerDisclaimer;
-    document.getElementById('footer-warning').textContent = t.footerWarning;
+    document.documentElement.lang = currentLanguage;
+    document.title = `${t('title')} — ${t('subtitle')}`;
+    const text = {
+        'app-kicker': 'kicker', 'app-title': 'title', 'app-subtitle': 'subtitle', 'purpose-title': 'purpose',
+        'purpose-text': 'purposeText', 'weight-label': 'weightLabel', 'medication-label': 'medicationLabel',
+        'select-placeholder': 'selectMed', 'calculate-text': 'calculate', 'clear-text': 'clear',
+        'footer-disclaimer': 'footerDisclaimer', 'footer-warning': 'footerWarning',
+    };
+    for (const [id, key] of Object.entries(text)) $(id).textContent = t(key);
+    for (const med of MEDICATIONS) {
+        const opt = document.querySelector(`#medication-select option[value="${med}"]`);
+        if (opt) opt.textContent = t(`med_${med}`);
+    }
+    $('close-purpose').setAttribute('aria-label', t('close'));
+    $('weight-unit').setAttribute('aria-label', t('weightUnit'));
+    renderEngineStatus();
 }
 
 // ============================================
-// FORM HANDLING
+// FORM
 // ============================================
 
 async function handleFormSubmit(e) {
     e.preventDefault();
-    
-    const weightValue = parseFloat(document.getElementById('weight-input').value);
-    const weightUnit = document.getElementById('weight-unit').value;
-    const medication = document.getElementById('medication-select').value;
-    
-    // Convert weight to kg if needed
-    const weightKg = weightUnit === 'lbs' ? convertLbsToKg(weightValue) : weightValue;
-    
-    // Validate inputs
-    if (!weightValue || !medication) {
-        displayError(
-            translations[currentLanguage].enterWeight || 'Please enter weight and select medication'
-        );
-        return;
+    const raw = $('weight-input').value.trim();
+    const medication = $('medication-select').value;
+
+    if (!raw) return showMessage('enterWeight');
+    if (!medication) return showMessage('selectMedication');
+
+    const payload = {
+        weight: Number(raw),
+        weight_unit: $('weight-unit').value,
+        medication,
+        language: currentLanguage,
+    };
+
+    const btn = $('calculate-btn');
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    $('calculate-text').textContent = engineState === 'ready' || API_BASE_URL ? t('calculating') : t('engineLoading');
+    try {
+        const { status, body } = await requestDosage(payload);
+        if (!API_BASE_URL) setEngineState('ready');
+        lastOutcome = status === 200 ? { kind: 'result', body } : { kind: 'invalid', body };
+    } catch (err) {
+        console.error('Calculation error:', err);
+        if (!API_BASE_URL) setEngineState('error');
+        lastOutcome = { kind: 'message', key: 'apiError' };
+    } finally {
+        btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        $('calculate-text').textContent = t('calculate');
     }
-    
-    // Call backend API
-    await calculateDosage(weightKg, medication);
+    renderOutcome(true);
+}
+
+function showMessage(key) {
+    lastOutcome = { kind: 'message', key };
+    renderOutcome(true);
 }
 
 function clearForm() {
-    document.getElementById('dosage-form').reset();
-    document.getElementById('results-container').classList.add('hidden');
+    $('dosage-form').reset();
+    lastOutcome = null;
+    renderOutcome();
+    $('weight-input').focus();
 }
 
 // ============================================
-// API COMMUNICATION
+// RESULTS
 // ============================================
 
-async function calculateDosage(weightKg, medication) {
-    try {
-        const response = await fetch(`${API_BASE_URL}/calculate-dosage`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                weight_kg: weightKg,
-                medication: medication,
-                language: currentLanguage
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error('API request failed');
-        }
-        
-        const result = await response.json();
-        displayResults(result);
-        
-    } catch (error) {
-        console.error('Calculation error:', error);
-        displayError(
-            translations[currentLanguage].apiError || 
-            'Unable to connect to calculation service. Please try again.'
-        );
+function pick(obj, field) {
+    return obj[`${field}_${currentLanguage}`] ?? obj[`${field}_en`];
+}
+
+function renderOutcome(scroll = false) {
+    const box = $('results-container');
+    if (!lastOutcome) {
+        box.className = 'results-container hidden';
+        box.innerHTML = '';
+        return;
     }
+    const { kind } = lastOutcome;
+    if (kind === 'result') {
+        box.className = `results-container ${lastOutcome.body.safety_level}`;
+        box.innerHTML = resultHtml(lastOutcome.body);
+    } else {
+        box.className = 'results-container critical';
+        const body = lastOutcome.body;
+        const lines = kind === 'invalid'
+            ? (body.errors || []).map((e) => pick(e, 'message'))
+            : [];
+        const headline = kind === 'invalid' ? pick(body, 'message') : t(lastOutcome.key);
+        box.innerHTML = `
+            ${headerHtml(ICONS.caution, t('checkInput'), null, null)}
+            <div class="error-display">
+                <p class="error-message">${escapeHtml(headline)}</p>
+                ${lines.length ? `<ul class="error-list">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>` : ''}
+            </div>`;
+    }
+    if (scroll) box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-// ============================================
-// RESULTS DISPLAY
-// ============================================
-
-function displayResults(result) {
-    const container = document.getElementById('results-container');
-    const t = translations[currentLanguage];
-    
-    // Clear previous results
-    container.innerHTML = '';
-    
-    // Set safety level class
-    container.className = `results-container ${result.safety_level}`;
-    
-    // Get appropriate message based on language
-    const message = currentLanguage === 'en' ? result.message_en : result.message_es;
-    const warnings = currentLanguage === 'en' ? result.warnings_en : result.warnings_es;
-    const instructions = currentLanguage === 'en' ? result.instructions_en : result.instructions_es;
-    
-    // Build results HTML
-    let html = `
+function headerHtml(icon, title, subtitle, timestamp) {
+    return `
         <div class="result-header">
             <div class="result-title-group">
-                <div class="result-icon">${getSafetyIcon(result.safety_level)}</div>
+                <div class="result-icon" aria-hidden="true">${icon}</div>
                 <div class="result-title">
-                    <h3>${result.error ? t.warnings : t.dosageResult}</h3>
-                    <p>${t.safetyLevel}: ${t[result.safety_level]}</p>
+                    <h2>${escapeHtml(title)}</h2>
+                    ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ''}
                 </div>
             </div>
+            ${timestamp ? `
             <div class="result-timestamp">
-                <p>${t.timestamp}</p>
-                <p>${formatTimestamp(result.timestamp)}</p>
-            </div>
-        </div>
-    `;
-    
-    if (result.error) {
-        // Error display
+                <p>${escapeHtml(t('timestamp'))}</p>
+                <p>${escapeHtml(formatTimestamp(timestamp))}</p>
+            </div>` : ''}
+        </div>`;
+}
+
+function resultHtml(r) {
+    const icon = ICONS[r.safety_level] || ICONS.caution;
+    const level = t(r.safety_level);
+    const warnings = pick(r, 'warnings') || [];
+    const medName = pick(r, 'medication_name');
+    let html = headerHtml(icon, r.error ? t('warnings') : t('dosageResult'),
+        `${t('safetyLevel')}: ${level}`, r.timestamp);
+
+    if (r.error) {
         html += `
             <div class="error-display">
-                <p class="error-message">${message}</p>
-            </div>
-        `;
-        
-        if (warnings && warnings.length > 0) {
-            html += `
-                <div class="warnings-section">
-                    ${warnings.map(w => `
-                        <div class="warning-item">⚠️ ${w}</div>
-                    `).join('')}
-                </div>
-            `;
-        }
+                <p class="error-message">${escapeHtml(pick(r, 'message'))}</p>
+            </div>`;
     } else {
-        // Success display
         html += `
             <div class="dosage-display">
                 <div class="dosage-value">
-                    <span class="dose">${result.dose_mg} mg</span>
-                    <div class="medication">${result.medication_name}</div>
+                    <span class="dose">${escapeHtml(formatNumber(r.dose_mg))} mg</span>
+                    <div class="medication">${escapeHtml(medName)}</div>
                 </div>
                 <div class="dosage-instructions">
-                    <div class="label">${t.instructions}</div>
-                    <div class="instruction-text">${instructions}</div>
+                    <div class="label">${escapeHtml(t('instructions'))}</div>
+                    <div class="instruction-text">${escapeHtml(pick(r, 'instructions'))}</div>
                 </div>
-            </div>
-        `;
-        
-        if (warnings && warnings.length > 0) {
-            html += `
-                <div class="warnings-section">
-                    <div class="warnings-title">
-                        ⚠️ ${t.warnings}
-                    </div>
-                    ${warnings.map(w => `
-                        <div class="warning-item">${w}</div>
-                    `).join('')}
-                </div>
-            `;
-        }
-        
-        html += `
-            <div class="metadata-grid">
-                <div class="metadata-item">
-                    <div class="label">${t.weightLabel}</div>
-                    <div class="value">${result.weight_used_kg} kg</div>
-                </div>
-                <div class="metadata-item">
-                    <div class="label">${t.safetyLevel}</div>
-                    <div class="value">${t[result.safety_level]}</div>
-                </div>
-            </div>
-        `;
+            </div>`;
     }
-    
-    container.innerHTML = html;
-    container.classList.remove('hidden');
-    
-    // Scroll to results
-    container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
 
-function displayError(message) {
-    const container = document.getElementById('results-container');
-    container.className = 'results-container critical';
-    container.innerHTML = `
-        <div class="result-header">
-            <div class="result-title-group">
-                <div class="result-icon">⚠️</div>
-                <div class="result-title">
-                    <h3>${translations[currentLanguage].warnings}</h3>
-                </div>
-            </div>
-        </div>
-        <div class="error-display">
-            <p class="error-message">${message}</p>
-        </div>
-    `;
-    container.classList.remove('hidden');
-}
+    if (warnings.length) {
+        html += `
+            <div class="warnings-section">
+                ${r.error ? '' : `<div class="warnings-title">${escapeHtml(t('warnings'))}</div>`}
+                ${warnings.map((w) => `<div class="warning-item">${escapeHtml(w)}</div>`).join('')}
+            </div>`;
+    }
 
-// ============================================
-// UTILITY FUNCTIONS
-// ============================================
-
-function convertLbsToKg(lbs) {
-    return lbs * 0.453592;
-}
-
-function getSafetyIcon(level) {
-    const icons = {
-        safe: '✓',
-        caution: '⚠️',
-        critical: '⚠️'
-    };
-    return icons[level] || '•';
-}
-
-function formatTimestamp(isoString) {
-    const date = new Date(isoString);
-    const options = {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    };
-    return date.toLocaleString(currentLanguage === 'en' ? 'en-US' : 'es-ES', options);
+    const meta = [
+        [t('weightUsed'), `${formatNumber(r.weight_used_kg)} kg`],
+        [t('calculatedDose'), `${formatNumber(r.calculated_dose_mg)} mg`],
+        [t('maxSingleDose'), `${formatNumber(r.max_safe_dose_mg)} mg`],
+        [t('percentOfMax'), `${formatNumber(r.percent_of_max)}%`],
+    ];
+    html += `
+        <div class="metadata-grid">
+            ${meta.map(([label, value]) => `
+            <div class="metadata-item">
+                <div class="label">${escapeHtml(label)}</div>
+                <div class="value">${escapeHtml(value)}</div>
+            </div>`).join('')}
+        </div>`;
+    return html;
 }
 
 // ============================================
-// FALLBACK TRANSLATIONS
+// UTILITIES
 // ============================================
 
-function getFallbackTranslations() {
-    return {
-        en: {
-            title: "Pediatric Clinical Decision Support",
-            subtitle: "Weight-Based Dosage Calculator",
-            purpose: "Purpose",
-            purposeText: "This prototype demonstrates how Clinical Decision Support (CDS) logic can reduce medication errors at the point of care by enforcing safety guardrails and providing bilingual instructions.",
-            weightLabel: "Patient Weight",
-            medicationLabel: "Select Medication",
-            selectMed: "Choose medication...",
-            calculate: "Calculate Safe Dosage",
-            clear: "Clear",
-            dosageResult: "Recommended Dosage",
-            instructions: "Administration Instructions",
-            warnings: "Safety Alerts",
-            timestamp: "Calculation Time",
-            safetyLevel: "Safety Assessment",
-            safe: "Safe",
-            caution: "Caution",
-            critical: "Critical - Do Not Administer",
-            enterWeight: "Please enter patient weight",
-            apiError: "Unable to connect to service",
-            footerDisclaimer: "Clinical Decision Support Prototype • For Educational Purposes Only",
-            footerWarning: "Always verify dosages with current medical guidelines and protocols"
-        },
-        es: {
-            title: "Soporte de Decisiones Clínicas Pediátricas",
-            subtitle: "Calculadora de Dosis Basada en Peso",
-            purpose: "Propósito",
-            purposeText: "Este prototipo demuestra cómo la lógica de Soporte de Decisiones Clínicas (CDS) puede reducir errores de medicación en el punto de atención al hacer cumplir las medidas de seguridad y proporcionar instrucciones bilingües.",
-            weightLabel: "Peso del Paciente",
-            medicationLabel: "Seleccionar Medicamento",
-            selectMed: "Elegir medicamento...",
-            calculate: "Calcular Dosis Segura",
-            clear: "Limpiar",
-            dosageResult: "Dosis Recomendada",
-            instructions: "Instrucciones de Administración",
-            warnings: "Alertas de Seguridad",
-            timestamp: "Hora de Cálculo",
-            safetyLevel: "Evaluación de Seguridad",
-            safe: "Seguro",
-            caution: "Precaución",
-            critical: "Crítico - No Administrar",
-            enterWeight: "Por favor ingrese el peso del paciente",
-            apiError: "No se puede conectar al servicio",
-            footerDisclaimer: "Prototipo de Soporte de Decisiones Clínicas • Solo con Fines Educativos",
-            footerWarning: "Siempre verifique las dosis con las pautas y protocolos médicos actuales"
-        }
-    };
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+}
+
+function formatNumber(n) {
+    return Number(n).toLocaleString(currentLanguage === 'es' ? 'es-MX' : 'en-US', { maximumFractionDigits: 2 });
+}
+
+function formatTimestamp(iso) {
+    return new Date(iso).toLocaleString(currentLanguage === 'es' ? 'es-MX' : 'en-US', {
+        year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
 }

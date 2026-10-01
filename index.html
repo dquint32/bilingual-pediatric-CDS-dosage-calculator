@@ -1,84 +1,72 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pediatric CDS Dosage Calculator</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>Pediatric Clinical Decision Support — Weight-Based Dosage Calculator</title>
+    <meta name="description" content="Bilingual (English/Spanish) pediatric weight-based dosage calculator with clinical safety guardrails. The tested Python/Pydantic backend runs in the browser via Pyodide.">
+    <meta name="author" content="David Quintana">
+    <meta name="color-scheme" content="dark light">
+    <meta name="theme-color" content="#0d0d0d">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&amp;family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+    <script>try{var t=localStorage.getItem('dq-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+    <link rel="stylesheet" href="dq-theme.css">
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-content">
-                <div class="header-icon">
-                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                    </svg>
-                </div>
-                <div class="header-text">
-                    <h1 id="app-title">Pediatric Clinical Decision Support</h1>
-                    <p id="app-subtitle">Weight-Based Dosage Calculator</p>
-                </div>
-            </div>
-            
-            <!-- Language Toggle -->
-            <div class="language-toggle">
-                <button class="lang-btn active" data-lang="en">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <line x1="2" y1="12" x2="22" y2="12"/>
-                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                    </svg>
-                    English
-                </button>
-                <button class="lang-btn" data-lang="es">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <line x1="2" y1="12" x2="22" y2="12"/>
-                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                    </svg>
-                    Español
-                </button>
-            </div>
-        </header>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="dq-header">
+    <div class="dq-container dq-header-inner">
+        <a class="brand" href="https://davidquintana.dev/" aria-label="David Quintana — portfolio home">
+            <span class="brand-mark" aria-hidden="true">DQ</span>
+            <span class="brand-text"><span class="brand-name">David Quintana</span><span class="brand-role">Live demo · Pediatric CDS</span></span>
+        </a>
+        <div class="dq-tools">
+            <div class="seg language-toggle" role="group" aria-label="Language / Idioma"><button type="button" class="lang-btn active" data-lang="en" aria-pressed="true">EN</button><button type="button" class="lang-btn" data-lang="es" aria-pressed="false" lang="es">ES</button></div>
+            <a class="icon-btn" href="https://github.com/dquint32/bilingual-pediatric-CDS-dosage-calculator" target="_blank" rel="noopener" aria-label="Source code on GitHub"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.4-4-1.4-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"/></svg></a>
+            <button class="icon-btn theme-toggle" type="button" aria-pressed="false" aria-label="Switch to light theme"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
+        </div>
+    </div>
+</header>
 
-        <!-- Purpose Section -->
-        <section id="purpose-section" class="purpose-section">
-            <div class="purpose-content">
-                <h3 id="purpose-title">Purpose</h3>
-                <p id="purpose-text">This prototype demonstrates how Clinical Decision Support (CDS) logic can reduce medication errors at the point of care by enforcing safety guardrails and providing bilingual instructions.</p>
-            </div>
-            <button class="close-btn" id="close-purpose">✕</button>
+<main id="main" class="dq-main">
+    <div class="dq-container">
+        <section class="dq-hero">
+            <p class="kicker" id="app-kicker">Clinical decision support · Live demo</p>
+            <h1 id="app-title">Pediatric Clinical Decision Support</h1>
+            <p class="lead" id="app-subtitle">Weight-Based Dosage Calculator</p>
+            <ul class="tags" aria-label="Technologies">
+                <li class="tag">Python</li><li class="tag">Pydantic v2</li><li class="tag">FastAPI</li><li class="tag">Pyodide</li><li class="tag">pytest</li>
+            </ul>
         </section>
 
-        <!-- Calculator Form -->
-        <div class="calculator-card">
-            <form id="dosage-form">
+        <section id="purpose-section" class="purpose-section callout" aria-labelledby="purpose-title">
+            <div class="purpose-content">
+                <h2 id="purpose-title">Purpose</h2>
+                <p id="purpose-text">This prototype demonstrates how Clinical Decision Support (CDS) logic can reduce medication errors at the point of care by enforcing safety guardrails and providing bilingual instructions.</p>
+            </div>
+            <button type="button" class="close-btn icon-btn" id="close-purpose" aria-label="Close">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </section>
+
+        <div class="calculator-card card card-accent">
+            <p id="engine-status" class="engine-status" role="status" aria-live="polite" hidden></p>
+            <form id="dosage-form" class="dq-form" novalidate>
                 <div class="form-grid">
-                    <!-- Weight Input -->
                     <div class="form-group">
                         <label for="weight-input" id="weight-label">Patient Weight</label>
                         <div class="weight-input-group">
-                            <input 
-                                type="number" 
-                                id="weight-input" 
-                                step="0.1" 
-                                min="0.1" 
-                                placeholder="0.0"
-                                required
-                            >
-                            <select id="weight-unit">
+                            <input type="number" id="weight-input" step="0.1" min="0.1" inputmode="decimal" placeholder="0.0" required>
+                            <select id="weight-unit" aria-label="Weight unit">
                                 <option value="kg">kg</option>
                                 <option value="lbs">lbs</option>
                             </select>
                         </div>
                     </div>
-
-                    <!-- Medication Selection -->
                     <div class="form-group">
                         <label for="medication-select" id="medication-label">Select Medication</label>
                         <select id="medication-select" required>
@@ -89,37 +77,34 @@
                         </select>
                     </div>
                 </div>
-
-                <!-- Action Buttons -->
-                <div class="button-group">
+                <div class="button-group btn-row">
                     <button type="submit" class="btn btn-primary" id="calculate-btn">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="4" y="2" width="16" height="20" rx="2"/>
-                            <line x1="8" y1="6" x2="16" y2="6"/>
-                            <line x1="8" y1="10" x2="16" y2="10"/>
-                            <line x1="8" y1="14" x2="12" y2="14"/>
-                        </svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/></svg>
                         <span id="calculate-text">Calculate Safe Dosage</span>
                     </button>
-                    <button type="button" class="btn btn-secondary" id="clear-btn">
-                        <span id="clear-text">Clear</span>
-                    </button>
+                    <button type="button" class="btn btn-secondary" id="clear-btn"><span id="clear-text">Clear</span></button>
                 </div>
             </form>
         </div>
 
-        <!-- Results Display -->
-        <div id="results-container" class="results-container hidden">
-            <!-- Results will be dynamically inserted here -->
-        </div>
+        <div id="results-container" class="results-container hidden" aria-live="polite"></div>
 
-        <!-- Footer -->
-        <footer class="footer">
+        <div class="notice">
             <p id="footer-disclaimer">Clinical Decision Support Prototype • For Educational Purposes Only</p>
             <p id="footer-warning">Always verify dosages with current medical guidelines and protocols</p>
-        </footer>
+        </div>
     </div>
+</main>
 
-    <script src="app.js"></script>
+<footer class="dq-footer">
+    <div class="dq-container dq-footer-inner">
+        <p>© 2026 David Quintana · Educational prototype — not for clinical use.</p>
+        <nav aria-label="Project links"><a href="https://davidquintana.dev/pediatric-cds-calculator.html">Case study</a><a href="https://github.com/dquint32/bilingual-pediatric-CDS-dosage-calculator" target="_blank" rel="noopener">Source code</a><a href="https://davidquintana.dev/">Portfolio</a></nav>
+    </div>
+</footer>
+
+<script src="dq-theme.js"></script>
+<script src="py-engine.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
